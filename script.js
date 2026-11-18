@@ -3,6 +3,20 @@
   const $ = (s, r = document) => r.querySelector(s);
   const yr = $("#year"); if (yr) yr.textContent = new Date().getFullYear();
 
+  // Theme (dark / light). Saved choice is applied in <head> before paint; this wires up the button.
+  const root = document.documentElement, themeBtn = $("[data-theme-toggle]"), themeMeta = $('meta[name="theme-color"]');
+  const getTheme = () => (root.dataset.theme === "light" ? "light" : "dark");
+  const setTheme = (t, save = true) => {
+    root.dataset.theme = t;
+    const next = t === "dark" ? "light" : "dark";
+    if (themeBtn) themeBtn.setAttribute("aria-label", "Switch to " + next + " mode");
+    if (themeMeta) themeMeta.setAttribute("content", t === "dark" ? "#0a0a0a" : "#fafaf8");
+    if (save) { try { localStorage.setItem("theme", t); } catch {} }
+  };
+  const toggleTheme = () => setTheme(getTheme() === "dark" ? "light" : "dark");
+  setTheme(getTheme(), false);
+  if (themeBtn) themeBtn.addEventListener("click", toggleTheme);
+
   // Mobile menu
   const toggle = $(".menu-toggle"), nav = $("#nav");
   const setMenu = (o) => { nav.classList.toggle("open", o); toggle.setAttribute("aria-expanded", String(o)); toggle.textContent = o ? "close" : "menu"; };
@@ -44,14 +58,66 @@
     });
   }
 
+  // Swipeable carousels (touch swipe, trackpad, arrows, dots, and arrow keys when the track is focused)
+  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  document.querySelectorAll("[data-carousel]").forEach((c) => {
+    const track = $(".track", c), slides = [...track.children];
+    if (!slides.length) return;
+    c.setAttribute("role", "group"); c.setAttribute("aria-roledescription", "carousel"); c.setAttribute("aria-label", c.dataset.label || "Carousel");
+    slides.forEach((s, i) => { s.setAttribute("role", "group"); s.setAttribute("aria-roledescription", "slide"); s.setAttribute("aria-label", (i + 1) + " of " + slides.length); });
+    track.setAttribute("aria-label", (c.dataset.label || "Carousel") + " (scroll sideways)");
+
+    const ctrl = document.createElement("div"); ctrl.className = "ctrl";
+    ctrl.innerHTML = '<button type="button" data-prev aria-label="Previous">←</button><div class="dots"></div><button type="button" data-next aria-label="Next">→</button>';
+    c.appendChild(ctrl);
+    const prev = $("[data-prev]", ctrl), next = $("[data-next]", ctrl), dots = $(".dots", ctrl);
+
+    let pages = 1, cur = 0, ticking = false;
+    const gap = () => parseFloat(getComputedStyle(track).columnGap) || 0;
+    const perView = () => Math.max(1, Math.floor((track.clientWidth + gap()) / (slides[0].offsetWidth + gap()) + 0.02));
+    const goTo = (i) => {
+      const t = Math.max(0, Math.min(pages - 1, i));
+      track.scrollTo({ left: slides[t].offsetLeft - slides[0].offsetLeft, behavior: reduceMotion ? "auto" : "smooth" });
+    };
+    const build = () => {
+      pages = Math.max(1, slides.length - perView() + 1);
+      ctrl.hidden = pages <= 1;
+      dots.innerHTML = "";
+      for (let i = 0; i < pages; i++) {
+        const b = document.createElement("button"); b.type = "button"; b.setAttribute("aria-label", "Go to slide " + (i + 1));
+        b.addEventListener("click", () => goTo(i)); dots.appendChild(b);
+      }
+      update();
+    };
+    const update = () => {
+      ticking = false;
+      const atEnd = track.scrollLeft + track.clientWidth >= track.scrollWidth - 2;
+      let best = 0, bd = Infinity;
+      for (let i = 0; i < pages; i++) { const d = Math.abs(slides[i].offsetLeft - slides[0].offsetLeft - track.scrollLeft); if (d < bd) { bd = d; best = i; } }
+      cur = atEnd ? pages - 1 : best;
+      [...dots.children].forEach((d, i) => { i === cur ? d.setAttribute("aria-current", "true") : d.removeAttribute("aria-current"); });
+      prev.disabled = track.scrollLeft <= 2; next.disabled = atEnd;
+    };
+    track.addEventListener("scroll", () => { if (!ticking) { ticking = true; requestAnimationFrame(update); } }, { passive: true });
+    prev.addEventListener("click", () => goTo(cur - 1));
+    next.addEventListener("click", () => goTo(cur + 1));
+    track.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowRight") { e.preventDefault(); goTo(cur + 1); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); goTo(cur - 1); }
+    });
+    addEventListener("resize", build);
+    build();
+  });
+
   // Command palette
   const pal = $("#palette"), input = $("#palette-input"), list = $("#palette-list");
   const go = (id) => () => { const el = $(id); if (el) el.scrollIntoView({ behavior: "smooth" }); };
   const open = (u) => () => window.open(u, "_blank", "noopener");
   const cmds = [
     { t: "home", h: "go to", f: go("#home") }, { t: "projects", h: "go to", f: go("#projects") },
-    { t: "experience & education", h: "go to", f: go("#experience") }, { t: "stack", h: "go to", f: go("#stack") },
-    { t: "contact", h: "go to", f: go("#contact") },
+    { t: "experience & education", h: "go to", f: go("#experience") }, { t: "certificates", h: "go to", f: go("#certificates") },
+    { t: "stack", h: "go to", f: go("#stack") }, { t: "contact", h: "go to", f: go("#contact") },
+    { get t() { return "switch to " + (getTheme() === "dark" ? "light" : "dark") + " mode"; }, h: "action", f: toggleTheme },
     { t: "copy email", h: "action", f: () => copyEmail($("[data-copy-email]")) },
     { t: "open live system", h: "link", f: open("https://aics-predictive-system.onrender.com/") },
     { t: "open github", h: "link", f: open("https://github.com/Sobiono-k") },
